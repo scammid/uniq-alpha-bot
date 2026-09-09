@@ -39,8 +39,12 @@ async function processUser(user, alertCallback) {
   const winCheck = await alphabot.checkWins(alphabot_api_key);
   if (winCheck.success && winCheck.wins.length > 0) {
     for (const raffle of winCheck.wins) {
-      if (!wins.has(raffle.slug)) {
+            if (!wins.has(raffle.slug)) {
         wins.add(raffle.slug);
+        // Skip wins older than 24 hours — only alert on genuinely new wins
+        const endDate = raffle.endDate || 0;
+        const isRecent = endDate && (Date.now() - endDate) < 24 * 60 * 60 * 1000;
+        if (!isRecent) continue;
         await db.logEntry(discord_id, raffle.slug, raffle.name || raffle.slug, raffle.teamId || '', 'won', null);
         if (alertCallback) alertCallback(discord_id, 'win', raffle);
         await scheduleReminder(discord_id, alphabot_api_key, raffle.slug, raffle.name || raffle.slug, null);
