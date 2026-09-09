@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Events, REST, Routes, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Events, REST, Routes, EmbedBuilder, MessageFlags } = require('discord.js');
 const { handleInteraction } = require('./handlers/interactionHandler');
 const { buildSharedPanel, BANNER_URL } = require('./utils/panelBuilder');
 const { runLoop } = require('./services/autoEnter');
@@ -190,9 +190,13 @@ client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isChatInputCommand()) {
 
     if (interaction.commandName === 'panel') {
-      await interaction.reply({ content: '✅ Panel posted!', ephemeral: true });
-      await interaction.channel.send(buildSharedPanel());
-      return;
+  if (!(await hasRole(interaction.guild, interaction.user.id))) {
+    return interaction.reply({ content: '❌ This bot is exclusive to **Premium+** members only.', flags: MessageFlags.Ephemeral });
+  }
+  await interaction.reply({ content: '✅ Panel posted!', flags: MessageFlags.Ephemeral });
+  await interaction.channel.send(buildSharedPanel());
+  return;
+}
     }
 
     if (interaction.commandName === 'setup') {
