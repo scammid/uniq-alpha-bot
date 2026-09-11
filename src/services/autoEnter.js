@@ -1,6 +1,7 @@
 const db = require('./database');
 const alphabot = require('./alphabot');
 const { scheduleReminder } = require('./mintReminder');
+const { normalizeTimestamp } = require('../utils/time');
 
 const enteredThisSession = new Map();
 const knownWins = new Map();
@@ -23,11 +24,11 @@ async function processUser(user, alertCallback) {
   }
 
   let result;
-  if (mode === 'communities') result = await alphabot.getMyCommunityRaffles(alphabot_api_key);
+  if (mode === 'communities') result = await alphabot.getMyCommunityRaffles(alphabot_api_key, discord_id);
   else if (mode === 'custom') {
     const ids = custom_team_ids ? custom_team_ids.split(',').map(s => s.trim()).filter(Boolean) : [];
-    result = await alphabot.getOpenRaffles(alphabot_api_key, ids);
-  } else result = await alphabot.getOpenRaffles(alphabot_api_key);
+    result = await alphabot.getOpenRaffles(alphabot_api_key, ids, discord_id);
+  } else result = await alphabot.getOpenRaffles(alphabot_api_key, [], discord_id);
 
   if (!result.success) {
     if (result.invalidKey) { await db.setRunning(discord_id, false); if (alertCallback) alertCallback(discord_id, 'invalid_key', null); return { entered: 0, failed: 0, skipped: 0 }; }
@@ -36,13 +37,15 @@ async function processUser(user, alertCallback) {
   }
 
   // Check wins
-  const winCheck = await alphabot.checkWins(alphabot_api_key);
+  const winCheck = await alphabot.checkWins(alphabot_api_key, discord_id);
   if (winCheck.success && winCheck.wins.length > 0) {
     for (const raffle of winCheck.wins) {
       if (!wins.has(raffle.slug)) {
         wins.add(raffle.slug);
-        // Skip wins older than 24 hours — only alert on genuinely new wins
-        const endDate = raffle.endDate || 0;
+        // Skip wins older than 24 hours — only alert on genuinely new wins.
+        // normalizeTimestamp handles ms epoch, seconds epoch, or ISO string
+        // so this doesn't silently break if the API's date format changes.
+        const endDate = normalizeTimestamp(raffle.endDate);
         const isRecent = endDate && (Date.now() - endDate) < 24 * 60 * 60 * 1000;
         if (!isRecent) continue;
         await db.logEntry(discord_id, raffle.slug, raffle.name || raffle.slug, raffle.teamId || '', 'won', null);
@@ -71,7 +74,7 @@ async function processUser(user, alertCallback) {
     if (entered.has(slug)) { skippedCount++; continue; }
     if (await db.isBlocked(discord_id, name, teamId)) { entered.add(slug); skippedCount++; continue; }
 
-    const res = await alphabot.enterRaffle(alphabot_api_key, slug);
+    const res = await alphabot.enterRaffle(alphabot_api_key, slug, discord_id);
     entered.add(slug);
 
     if (res.rateLimited) { rateLimitUntil.set(discord_id, Date.now() + 10 * 60 * 1000); if (alertCallback) alertCallback(discord_id, 'rate_limited', null); break; }

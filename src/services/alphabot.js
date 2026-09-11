@@ -1,18 +1,29 @@
 const axios = require('axios');
+const { getAgentForUser } = require('../utils/proxyAgent');
 
 const BASE_URL = 'https://api.alphabot.app/v1';
 
-function createClient(apiKey) {
+// Network-level errors worth retrying once (as opposed to a definitive
+// 4xx/response from Alphabot itself). Proxy hops add a few more ways a
+// request can fail transiently, so this list is a bit broader than just
+// timeouts.
+const RETRYABLE_CODES = new Set(['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN']);
+
+function createClient(apiKey, discordId) {
+  const agent = getAgentForUser(discordId);
   return axios.create({
     baseURL: BASE_URL,
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     timeout: 30000,
+    // When a proxy agent is set, also disable axios's own env-based proxy
+    // handling so it doesn't try to layer another proxy on top of it.
+    ...(agent ? { httpsAgent: agent, proxy: false } : {}),
   });
 }
 
-async function validateApiKey(apiKey) {
+async function validateApiKey(apiKey, discordId) {
   try {
-    const client = createClient(apiKey);
+    const client = createClient(apiKey, discordId);
     const res = await client.get('/raffles', { params: { status: 'active', pageSize: 1 } });
     if (res.data?.success) return { valid: true };
     return { valid: false, error: 'Invalid response' };
@@ -24,9 +35,9 @@ async function validateApiKey(apiKey) {
   }
 }
 
-async function getOpenRaffles(apiKey, teamIds = []) {
+async function getOpenRaffles(apiKey, teamIds = [], discordId) {
   try {
-    const client = createClient(apiKey);
+    const client = createClient(apiKey, discordId);
     let allRaffles = [];
     if (teamIds.length > 0) {
       for (const alpha of teamIds) {
@@ -48,9 +59,9 @@ async function getOpenRaffles(apiKey, teamIds = []) {
   }
 }
 
-async function getMyCommunityRaffles(apiKey) {
+async function getMyCommunityRaffles(apiKey, discordId) {
   try {
-    const client = createClient(apiKey);
+    const client = createClient(apiKey, discordId);
     const res = await client.get('/raffles', { params: { status: 'active', pageSize: 50, scope: 'community' } });
     const raffles = res.data?.data?.raffles || [];
     console.log(`[Alphabot] [COMMUNITY] Found ${raffles.length} raffle(s)`);
@@ -64,9 +75,9 @@ async function getMyCommunityRaffles(apiKey) {
   }
 }
 
-async function enterRaffle(apiKey, slug, retries = 2) {
+async function enterRaffle(apiKey, slug, discordId, retries = 2) {
   try {
-    const client = createClient(apiKey);
+    const client = createClient(apiKey, discordId);
     const res = await client.post('/register', { slug });
     const validation = res.data?.data?.validation;
     const reason = validation?.reason;
@@ -83,9 +94,9 @@ async function enterRaffle(apiKey, slug, retries = 2) {
   } catch (err) {
     const status = err.response?.status;
     const message = err.response?.data?.errors?.[0]?.message || err.message;
-    if (err.code === 'ECONNABORTED' && retries > 0) {
+    if (RETRYABLE_CODES.has(err.code) && retries > 0) {
       await new Promise(r => setTimeout(r, 3000));
-      return enterRaffle(apiKey, slug, retries - 1);
+      return enterRaffle(apiKey, slug, discordId, retries - 1);
     }
     if (status === 401) return { success: false, invalidKey: true, error: message };
     if (status === 429) return { success: false, rateLimited: true, error: message };
@@ -95,9 +106,9 @@ async function enterRaffle(apiKey, slug, retries = 2) {
   }
 }
 
-async function checkWins(apiKey) {
+async function checkWins(apiKey, discordId) {
   try {
-    const client = createClient(apiKey);
+    const client = createClient(apiKey, discordId);
     const res = await client.get('/raffles', { params: { filter: 'winners', pageSize: 50 } });
     const wins = res.data?.data?.raffles || [];
     console.log(`[Win] Found ${wins.length} win(s)`);
@@ -105,9 +116,9 @@ async function checkWins(apiKey) {
   } catch (_) { return { success: false, wins: [] }; }
 }
 
-async function getRaffleDetails(apiKey, slug) {
+async function getRaffleDetails(apiKey, slug, discordId) {
   try {
-    const client = createClient(apiKey);
+    const client = createClient(apiKey, discordId);
     const res = await client.get(`/raffles/${slug}`);
     return { success: true, raffle: res.data?.data?.raffle };
   } catch (err) { return { success: false, error: err.message }; }
