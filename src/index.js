@@ -48,7 +48,18 @@ async function registerCommands() {
       : Routes.applicationCommands(process.env.CLIENT_ID);
     await rest.put(route, { body: commands });
     console.log('[Bot] Slash commands registered.');
-  } catch (err) { console.error('[Bot] Failed to register commands:', err.message); }
+  } catch (err) {
+    console.error('[Bot] Failed to register commands:', err.message);
+    if (GUILD_ID && (err.status === 403 || err.code === 50001)) {
+      console.error(
+        `[Bot] "Missing Access" registering commands for GUILD_ID="${GUILD_ID}". This means either ` +
+        `(a) the bot is not currently a member of that guild, or (b) it was invited without the ` +
+        `"applications.commands" OAuth2 scope. Fix: re-invite the bot with both "bot" and ` +
+        `"applications.commands" scopes checked, and confirm GUILD_ID matches the target server's ` +
+        `ID exactly (right-click the server icon → Copy Server ID, with Developer Mode enabled).`
+      );
+    }
+  }
 }
 
 async function hasRole(guild, userId) {
@@ -63,7 +74,26 @@ async function dmUser(discordId, content) {
   try {
     const user = await client.users.fetch(discordId);
     await user.send(content);
-  } catch (err) { console.error(`[DM] Failed to DM ${discordId}:`, err.message); }
+  } catch (err) {
+    console.error(`[DM] Failed to DM ${discordId}:`, err.message);
+    // Discord API code 50007 = "Cannot send messages to this user" — almost
+    // always because the bot no longer shares a guild with them (they left).
+    // Without this, a departed user with a stale is_running=1 row gets
+    // retried forever: every tick keeps spending their Alphabot entries and
+    // every notification keeps failing the same way. Self-heal immediately
+    // instead of waiting on the 30-min role sweep (which additionally only
+    // runs at all if GUILD_ID correctly resolves).
+    if (err.code === 50007) {
+      try {
+        const user = await db.getUser(discordId);
+        if (user?.is_running) {
+          await db.setRunning(discordId, false);
+          clearSessionCache(discordId);
+          console.log(`[DM] Stopped bot for ${discordId} — cannot DM (no mutual guild / DMs closed)`);
+        }
+      } catch (innerErr) { console.error(`[DM] Cleanup error for ${discordId}:`, innerErr.message); }
+    }
+  }
 }
 
 // Auto-stop users who lose Premium+ role
