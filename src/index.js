@@ -2,7 +2,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Events, REST, Routes, EmbedBuilder, MessageFlags } = require('discord.js');
 const { handleInteraction } = require('./handlers/interactionHandler');
 const { buildSharedPanel, BANNER_URL } = require('./utils/panelBuilder');
-const { runLoop } = require('./services/autoEnter');
+const { runLoop, clearSessionCache } = require('./services/autoEnter');
 const { startMintReminderLoop } = require('./services/mintReminder');
 const db = require('./services/database');
 
@@ -69,7 +69,7 @@ async function dmUser(discordId, content) {
 // Auto-stop users who lose Premium+ role
 async function checkRoles() {
   try {
-    const guild = await client.guilds.fetch(GUILD_ID);
+    const guild = client.guilds.cache.get(GUILD_ID) || await client.guilds.fetch(GUILD_ID);
     const runningUsers = await db.getAllRunningUsers();
     for (const user of runningUsers) {
       const stillHasRole = await hasRole(guild, user.discord_id);
@@ -81,7 +81,16 @@ async function checkRoles() {
         console.log(`[Role] Stopped bot for ${user.discord_id} — lost Premium+ role`);
       }
     }
-  } catch (err) { console.error('[Role] Check error:', err.message); }
+  } catch (err) {
+    console.error('[Role] Check error:', err.message);
+    if (err.message === 'Unknown Guild') {
+      // GUILD_ID doesn't match any guild this bot is currently in. Log what
+      // it IS in so the mismatch is obvious from the deploy logs instead of
+      // requiring a manual lookup.
+      const known = [...client.guilds.cache.values()].map(g => `${g.name} (${g.id})`).join(', ') || 'none — bot is in zero guilds';
+      console.error(`[Role] GUILD_ID env var is set to "${GUILD_ID}". Bot is currently a member of: ${known}`);
+    }
+  }
 }
 
 client.once(Events.ClientReady, async () => {
@@ -166,6 +175,22 @@ client.once(Events.ClientReady, async () => {
 client.on(Events.GuildMemberAdd, async member => {
   if (member.guild.id !== GUILD_ID) return;
   console.log(`[Bot] New member: ${member.user.username}`);
+});
+
+// ── Member leaves the server → auto-stop ────────────────────────
+// Without this, a user who leaves keeps is_running=true forever: the
+// auto-enter loop keeps spending their Alphabot entries and every notify
+// attempt fails with "no mutual guilds" since the bot can no longer DM them.
+client.on(Events.GuildMemberRemove, async member => {
+  if (member.guild.id !== GUILD_ID) return;
+  try {
+    const user = await db.getUser(member.id);
+    if (user?.is_running) {
+      await db.setRunning(member.id, false);
+      clearSessionCache(member.id);
+      console.log(`[Role] Stopped bot for ${member.id} — left the server`);
+    }
+  } catch (err) { console.error(`[Role] GuildMemberRemove error for ${member.id}:`, err.message); }
 });
 
 // ── Member role update → auto-stop if role removed ────────────
