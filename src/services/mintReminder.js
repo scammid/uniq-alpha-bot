@@ -1,6 +1,7 @@
 const db = require('./database');
 const alphabot = require('./alphabot');
 const { EmbedBuilder } = require('discord.js');
+const { normalizeTimestamp } = require('../utils/time');
 
 const BANNER_URL = 'https://raw.githubusercontent.com/scammid/uniq-alpha-bot/main/Logo_Animation-02.webp';
 
@@ -58,9 +59,9 @@ function buildStartMsg(r) {
 
 async function scheduleReminder(discordId, apiKey, raffleSlug, raffleName, walletUsed) {
   try {
-    const result = await alphabot.getRaffleDetails(apiKey, raffleSlug);
+    const result = await alphabot.getRaffleDetails(apiKey, raffleSlug, discordId);
     if (!result.success || !result.raffle) return;
-    const mintDate = result.raffle.mintDate || 0;
+    const mintDate = normalizeTimestamp(result.raffle.mintDate);
     if (mintDate && mintDate > Date.now()) {
       await db.addMintReminder(discordId, raffleSlug, raffleName, mintDate, walletUsed);
       console.log(`[Mint] Scheduled reminders for ${raffleName}`);

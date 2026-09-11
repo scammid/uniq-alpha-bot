@@ -110,7 +110,7 @@ async function handleInteraction(interaction, client) {
       case 'modal_api_key': {
         const apiKey = interaction.fields.getTextInputValue('api_key_input').trim();
         const forwardWebhook = interaction.fields.getTextInputValue('forward_webhook').trim();
-        const validation = await alphabot.validateApiKey(apiKey);
+        const validation = await alphabot.validateApiKey(apiKey, userId);
         if (!validation.valid) return interaction.editReply({ content: `❌ Invalid API key: ${validation.error}` });
         await db.setApiKey(userId, apiKey);
         if (forwardWebhook) await db.setForwardWebhook(userId, forwardWebhook);
